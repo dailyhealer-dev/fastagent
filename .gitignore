@@ -57,3 +57,8 @@ Thumbs.db
 *.log
 logs/
 tmp/
+
+# Vector stores / embeddings
+data/chroma_store/
+tools/data/chroma_store/
+chroma_store/

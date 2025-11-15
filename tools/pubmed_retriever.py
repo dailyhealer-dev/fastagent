@@ -1,13 +1,10 @@
 # tools.py
-from langchain.tools import Tool
+from langchain.tools import BaseTool
 import requests
 from bs4 import BeautifulSoup
 
 def retrieve_pubmed_abstracts_single(query: str) -> str:
-    """
-    Single-input version: max_results fixed internally.
-    """
-    max_results = 3  # fix this inside the function
+    max_results = 3
     try:
         # Step 1: search PubMed IDs
         search_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -24,7 +21,7 @@ def retrieve_pubmed_abstracts_single(query: str) -> str:
         if not ids:
             return "No relevant PubMed articles found."
 
-        # Step 2: Fetch abstracts
+        # Step 2: fetch abstracts
         fetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
         fetch_params = {
             "db": "pubmed",
@@ -46,9 +43,15 @@ def retrieve_pubmed_abstracts_single(query: str) -> str:
         return f"Error retrieving data from PubMed: {e}"
 
 
-# Single-input tool for ZeroShotAgent
-medical_info_tool = Tool(
-    name="PubMedRetriever",
-    func=retrieve_pubmed_abstracts_single,
-    description="Search PubMed for abstracts (max 3 results) and return them as plain text."
-)
+# Subclass BaseTool and implement _run
+class MedicalInfoTool(BaseTool):
+    name: str = "PubMedRetriever"
+    description: str = "Search PubMed for abstracts (max 3 results) and return them as plain text."
+
+    def _run(self, query: str) -> str:
+        return retrieve_pubmed_abstracts_single(query)
+
+    async def _arun(self, query: str) -> str:
+        raise NotImplementedError("Async not implemented.")
+
+medical_info_tool = MedicalInfoTool()

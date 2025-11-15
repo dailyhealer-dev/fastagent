@@ -1,0 +1,14 @@
+services:
+  fastagent:
+    build: .
+    container_name: fastagent_app
+    ports:
+      - "8501:8501" # Streamlit default port
+    volumes:
+      - .:/app # Mount current project directory
+    env_file:
+      - .env
+    command: >
+      streamlit run main.py
+      --server.port=8501
+      --server.address=0.0.0.0
