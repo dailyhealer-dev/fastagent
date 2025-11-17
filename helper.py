@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import os
 import logging
 from langchain_ibm import WatsonxLLM
-from langchain.memory import ConversationBufferMemory
+# from langchain.memory import ConversationBufferMemory
 
 # ----------------------------
 # Load environment variables
@@ -33,7 +33,7 @@ llm = WatsonxLLM(
 # ----------------------------
 # Conversation memory
 # ----------------------------
-memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+# memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 # ----------------------------
 # System instruction / prompt

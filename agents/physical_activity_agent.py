@@ -1,6 +1,6 @@
 # agents/physical_activity_agent.py
 import logging
-from helper import llm, memory, system_prompt
+from helper import llm, system_prompt
 from tools.physical_activity_rag import build_physical_activity_rag
 
 # Initialize RAG tool

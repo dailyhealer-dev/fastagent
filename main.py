@@ -1,11 +1,13 @@
+# main.py
 from dotenv import load_dotenv
 import os
 import logging
 from langchain_ibm import WatsonxLLM
 from langchain.agents import create_agent
-# from langchain.memory.buffer import ConversationBufferMemory
+from langchain.tools import BaseTool
 from tools.pubmed_retriever import medical_info_tool
 from tools.physical_activity_rag import build_physical_activity_rag
+from tools.nutrition_rag import build_nutrition_rag
 
 # ----------------------------
 # Load environment variables
@@ -33,19 +35,113 @@ llm = WatsonxLLM(
 )
 
 # ----------------------------
-# Build the Physical Activity tool
+# Build RAG Tools
 # ----------------------------
 physical_activity_tool = build_physical_activity_rag()
 if physical_activity_tool is None:
-    logging.warning("Physical Activity tool failed to initialize. It will fallback to LLM.")
+    logging.warning("Physical Activity tool failed to initialize. Will fallback to LLM.")
+
+nutrition_tool = build_nutrition_rag()
+if nutrition_tool is None:
+    logging.warning("Nutrition tool failed to initialize. Will fallback to LLM.")
 
 # ----------------------------
-# Conversation memory
+# Logging setup
 # ----------------------------
-# memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+logging.basicConfig(level=logging.INFO)
 
 # ----------------------------
-# System instruction / prompt
+# Helper functions for routing
+# ----------------------------
+PHYSICAL_KEYWORDS = [
+    "exercise", "physical activity", "fitness", "workout", "aerobic",
+    "strength", "endurance", "cardio", "movement", "sports", "training",
+    "walking", "running", "yoga", "stretching", "cycling", "swimming", "resistance"
+]
+
+NUTRITION_KEYWORDS = [
+    "nutrition", "diet", "food", "nutrient", "protein", "carbohydrate", "fat",
+    "vitamin", "mineral", "fiber", "hydration", "balanced diet", "healthy eating",
+    "meal plan", "micronutrients", "macronutrients", "sodium", "cholesterol",
+    "sugar", "vegetables", "fruits", "whole grains", "dietary guideline"
+]
+
+GENERAL_HEALTH_KEYWORDS = [
+    "lifestyle", "sleep", "hydration", "stress", "mental health", "wellness"
+]
+
+def is_physical_activity_query(query: str) -> bool:
+    return any(kw.lower() in query.lower() for kw in PHYSICAL_KEYWORDS)
+
+def is_nutrition_query(query: str) -> bool:
+    return any(kw.lower() in query.lower() for kw in NUTRITION_KEYWORDS)
+
+def is_general_health_query(query: str) -> bool:
+    return any(kw.lower() in query.lower() for kw in GENERAL_HEALTH_KEYWORDS)
+
+# ----------------------------
+# Multi-Agent Tools
+# ----------------------------
+tools_list = []
+
+# Physical Activity Agent
+if physical_activity_tool:
+    class PhysicalActivityAgent(BaseTool):
+        name: str = "PhysicalActivityAgent"
+        description: str = "Answers questions specifically about physical activity and exercise."
+
+        def _run(self, query: str) -> str:
+            try:
+                return physical_activity_tool.run(query)
+            except Exception as e:
+                logging.error(f"Physical Activity sub-agent failed: {e}")
+                return "Physical Activity info not available."
+
+        async def _arun(self, query: str) -> str:
+            raise NotImplementedError("Async not implemented.")
+
+    physical_activity_agent = PhysicalActivityAgent()
+    tools_list.append(physical_activity_agent)
+
+# Nutrition Agent
+if nutrition_tool:
+    class NutritionAgent(BaseTool):
+        name: str = "NutritionAgent"
+        description: str = "Answers questions specifically about nutrition and dietary guidelines."
+
+        def _run(self, query: str) -> str:
+            try:
+                return nutrition_tool.run(query)
+            except Exception as e:
+                logging.error(f"Nutrition sub-agent failed: {e}")
+                return "Nutrition info not available."
+
+        async def _arun(self, query: str) -> str:
+            raise NotImplementedError("Async not implemented.")
+
+    nutrition_agent = NutritionAgent()
+    tools_list.append(nutrition_agent)
+
+# PubMed Agent
+class PubMedAgent(BaseTool):
+    name: str = "PubMedAgent"
+    description: str = "Searches PubMed for abstracts and returns plain text summaries."
+
+    def _run(self, query: str) -> str:
+        try:
+            return medical_info_tool.run(query)
+        except Exception as e:
+            logging.error(f"PubMed sub-agent failed: {e}")
+            return "PubMed info not available."
+
+    async def _arun(self, query: str) -> str:
+        raise NotImplementedError("Async not implemented.")
+
+pubmed_agent = PubMedAgent()
+tools_list.append(pubmed_agent)
+
+# ----------------------------
+# System Prompt
 # ----------------------------
 system_prompt = """
 You are a Personal Health Advisor AI.
@@ -68,57 +164,27 @@ If the user asks something unrelated to health, respond politely:
 > I am a personal health advisor. Please ask questions related to health, wellness, or lifestyle.
 
 Do NOT provide medical diagnoses; always encourage consulting a professional if needed.
-Use the conversation history to maintain context.
 Always provide evidence-based responses supported by reliable citations.
-Use the designated knowledge source whenever available to ensure factual accuracy.
-Never provide a medical diagnosis or treatment plan.
-Always recommend consulting a licensed physician for health concerns.
 Focus on prevention, lifestyle improvement, and educational guidance only.
-Clearly state limitations when responding to medical or uncertain questions.
-Prioritize user safety and accuracy in all health-related content.
-Maintain user privacy and handle all data securely.
-Reference credible public health authorities such as WHO or CDC.
-Communicate in a respectful, clear, and supportive manner.
 """
 
 # ----------------------------
-# Initialize main agent using create_agent
+# Initialize Main Agent (Multi-Agent)
 # ----------------------------
-tools_list = [medical_info_tool]
-if physical_activity_tool:
-    tools_list.append(physical_activity_tool)
-
-agent = create_agent(
-    llm,              # Your Watsonx Granite LLM
-    tools=tools_list,
-    system_prompt=system_prompt,
-    verbose=True
-)
-
-logging.basicConfig(level=logging.INFO)
-
-# ----------------------------
-# Helper functions
-# ----------------------------
-def is_general_health_query(query: str) -> bool:
-    general_keywords = [
-        "lifestyle", "sleep", "hydration", "stress", "mental health", "wellness"
-    ]
-    return any(keyword.lower() in query.lower() for keyword in general_keywords)
-
-def extract_physical_keywords(query: str) -> str:
-    physical_keywords = [
-        "exercise", "physical activity", "fitness", "workout", "aerobic",
-        "strength", "endurance", "cardio", "movement", "sports", "training",
-        "walking", "running", "yoga", "stretching", "cycling", "swimming", "resistance"
-    ]
-    return " ".join(kw for kw in physical_keywords if kw.lower() in query.lower())
-
-def is_physical_activity_query(query: str) -> bool:
-    return bool(extract_physical_keywords(query))
+multi_agent = None
+try:
+    multi_agent = create_agent(
+        llm,
+        tools=tools_list,
+        system_prompt=system_prompt
+    )
+    logging.info("Multi-agent initialized successfully.")
+except Exception as e:
+    logging.error(f"Multi-agent initialization failed: {e}")
+    multi_agent = None
 
 # ----------------------------
-# Main response function with RAG
+# Main Response Function
 # ----------------------------
 def get_response(user_input: str, language="English") -> str:
     try:
@@ -128,42 +194,41 @@ def get_response(user_input: str, language="English") -> str:
             "French": "Veuillez répondre en français.",
             "Deutsch": "Bitte antworte auf Deutsch."
         }
-        lang_instruction = language_prompts.get(language, "Please respond in English.")
+        lang_instruction = language_prompts.get(language, "Respond in English.")
 
-        # Step 1: Physical Activity RAG
-        rag_context = ""
-        if physical_activity_tool and is_physical_activity_query(user_input):
-            logging.info("Fetching Physical Activity info from RAG...")
-            keywords = extract_physical_keywords(user_input)
-            if keywords:
-                rag_response = physical_activity_tool.run(keywords)
-                if rag_response.strip():
-                    rag_context = f"Physical Activity Reference (keywords: {keywords}):\n{rag_response}\n"
+        # Routing
+        if is_physical_activity_query(user_input) and physical_activity_tool:
+            logging.info("Routing to Physical Activity Agent")
+            return f"Assistant: {physical_activity_agent._run(user_input)}"
 
-        # Step 2: PubMed context
-        pubmed_context = ""
-        logging.info("Fetching PubMed info...")
-        pubmed_response = medical_info_tool.run(user_input)
-        if pubmed_response.strip():
-            pubmed_context = f"PubMed Reference:\n{pubmed_response}\n"
+        if is_nutrition_query(user_input) and nutrition_tool:
+            logging.info("Routing to Nutrition Agent")
+            return f"Assistant: {nutrition_agent._run(user_input)}"
 
-        # Step 3: Combine context
-        context_text = ""
-        if rag_context or pubmed_context:
-            context_text = "Use the following evidence to support your response if relevant:\n"
-            context_text += rag_context + pubmed_context
-            context_text += (
-                "\nIMPORTANT: Answer using only the provided context. "
-                "Do NOT provide information outside of the retrieved references unless necessary. "
-                "Clearly indicate if you are using fallback knowledge.\n"
-            )
+        if is_general_health_query(user_input):
+            logging.info("Routing to PubMed Agent")
+            return f"Assistant: {pubmed_agent._run(user_input)}"
 
-        final_input = f"{lang_instruction}\nUser: {user_input}\n{context_text}"
+        # Otherwise, use multi-agent
+        if multi_agent:
+            final_input = f"{lang_instruction}\nUser: {user_input}"
+            try:
+                result = multi_agent.invoke({"input": final_input})
+                return f"Assistant: {result.get('output') if isinstance(result, dict) else str(result)}"
+            except Exception as ae:
+                logging.error(f"Multi-agent invocation failed: {ae}")
 
-        # Step 4: Generate answer
-        result = agent.invoke({"input": final_input})
-        return f"Assistant: {result['output']}"
+        # Fallback to LLM
+        final_input = f"{lang_instruction}\nUser: {user_input}"
+        try:
+            logging.info("Falling back to LLM.generate()")
+            llm_result = llm.generate([final_input])
+            answer = llm_result.generations[0][0].text
+            return f"Assistant: {answer}"
+        except Exception as e:
+            logging.error(f"LLM fallback failed: {e}")
+            return "Assistant: Sorry, something went wrong. Please try again later."
 
     except Exception as e:
-        logging.error(f"Error during AI response: {e}")
+        logging.error(f"Unexpected error in get_response: {e}")
         return "Assistant: Sorry, something went wrong. Please try again later."
